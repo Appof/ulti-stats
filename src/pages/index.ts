@@ -1,0 +1,6 @@
+export { HomePage } from './HomePage'
+export { GamesPage } from './GamesPage'
+export { TeamsPage } from './TeamsPage'
+export { PlayersPage } from './PlayersPage'
+export { HistoryPage } from './HistoryPage'
+export { TournamentPage } from './TournamentPage'
