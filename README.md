@@ -71,12 +71,13 @@ A web application for tracking ultimate frisbee statistics.
 
 ## TODO
 
-- [ ] Refactor game score UI
+- [X] Refactor game score UI
 - [X] Add export stats result button
 - [X] Finish tournament functionality
 - [X] Finish history functionality
 - [X] Refactor auth for login (only allowed emails)
 - [X] Display info in home page
 - [X] Fix mobile styles for main pages
-- [ ] Hosting, push to GitHub
+- [X] Hosting, push to GitHub
+- [ ] Game [protocol](https://docs.google.com/spreadsheets/d/1DiPli6cVmGYUI82V3EMBO5t0lCqC37h_nkbRPGpHmaY/edit?gid=1471253946#gid=1471253946) for each game 
  
