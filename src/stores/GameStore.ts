@@ -103,7 +103,7 @@ export class GameStore {
     }
   }
 
-  async updateGame(id: string, data: Partial<CreateGameData>): Promise<boolean> {
+  async updateGame(id: string, data: Partial<Game>): Promise<boolean> {
     const game = this.games.find((g) => g.id === id)
     if (!game) return false
 

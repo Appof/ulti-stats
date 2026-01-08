@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { observer } from 'mobx-react-lite'
 import { useLocation } from 'react-router-dom'
 import { Timestamp } from 'firebase/firestore'
+import { auth } from '@/config/firebase'
 import { TournamentGuard } from '@/components/tournament'
 import { useTournamentStore, useTeamStore, usePlayerStore, useGameStore } from '@/stores'
 import type { Game, RosterPlayer, CreateGameData, GameStatus } from '@/types'
@@ -40,8 +41,11 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
-import { Plus, Play, Eye, Trash2, Loader2, Undo2, Trophy, CheckCircle } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Plus, Play, Eye, Trash2, Loader2, Undo2, Trophy, CheckCircle, Printer, PenTool, Clock, Heart, Timer, Settings } from 'lucide-react'
 import { toast } from 'sonner'
+import { SignaturePad } from '@/components/ui/signature-pad'
+import { openGameScoresheet } from '@/components/game'
 
 const statusColors: Record<GameStatus, 'secondary' | 'default' | 'outline'> = {
   scheduled: 'secondary',
@@ -65,10 +69,31 @@ export const GamesPage = observer(function GamesPage() {
   const [awayTeamId, setAwayTeamId] = useState('')
   const [homeRoster, setHomeRoster] = useState<string[]>([])
   const [awayRoster, setAwayRoster] = useState<string[]>([])
+  const [gameField, setGameField] = useState('')
+  const [gameDivision, setGameDivision] = useState('')
+  const [gamePoolOrBracket, setGamePoolOrBracket] = useState('')
+  const [gameNumber, setGameNumber] = useState('')
 
   // Scoring flow state
   const [scoringTeamId, setScoringTeamId] = useState<string | null>(null)
   const [assisterPlayerId, setAssisterPlayerId] = useState<string | null | 'none'>(null)
+
+  // Game setup modal state
+  const [isSetupModalOpen, setIsSetupModalOpen] = useState(false)
+  const [pendingStartGame, setPendingStartGame] = useState<Game | null>(null)
+  const [setupOffenseTeamId, setSetupOffenseTeamId] = useState<string>('')
+  const [setupHomeStartsLeft, setSetupHomeStartsLeft] = useState<boolean>(true)
+  const [setupGenderRatio, setSetupGenderRatio] = useState<'3M/2F' | '2M/3F' | ''>('')
+
+  // Edit game settings modal state
+  const [isEditSettingsOpen, setIsEditSettingsOpen] = useState(false)
+  const [editField, setEditField] = useState('')
+  const [editDivision, setEditDivision] = useState('')
+  const [editPoolOrBracket, setEditPoolOrBracket] = useState('')
+  const [editGameNumber, setEditGameNumber] = useState('')
+  const [editOffenseTeamId, setEditOffenseTeamId] = useState<string>('')
+  const [editHomeStartsLeft, setEditHomeStartsLeft] = useState<boolean>(true)
+  const [editGenderRatio, setEditGenderRatio] = useState<'3M/2F' | '2M/3F' | ''>('')
 
   // Load games function
   const loadGames = useCallback(() => {
@@ -107,6 +132,10 @@ export const GamesPage = observer(function GamesPage() {
     setAwayTeamId('')
     setHomeRoster([])
     setAwayRoster([])
+    setGameField('')
+    setGameDivision('')
+    setGamePoolOrBracket('')
+    setGameNumber('')
   }
 
   const handleCreateGame = async () => {
@@ -136,6 +165,12 @@ export const GamesPage = observer(function GamesPage() {
       date: Timestamp.now(),
       status: 'scheduled',
     }
+    
+    // Only add optional fields if they have values
+    if (gameField) gameData.field = gameField
+    if (gameDivision) gameData.division = gameDivision
+    if (gamePoolOrBracket) gameData.poolOrBracket = gamePoolOrBracket
+    if (gameNumber) gameData.gameNumber = gameNumber
 
     const game = await gameStore.createGame(gameData)
     if (game) {
@@ -147,12 +182,46 @@ export const GamesPage = observer(function GamesPage() {
     }
   }
 
-  const handleStartGame = async (game: Game) => {
-    const success = await gameStore.updateGame(game.id, { status: 'in_progress' })
+  const handleStartGame = (game: Game) => {
+    // Open setup modal instead of directly starting
+    setPendingStartGame(game)
+    setSetupOffenseTeamId(game.homeTeamId) // Default to home team
+    setSetupHomeStartsLeft(true)
+    setSetupGenderRatio('')
+    setIsSetupModalOpen(true)
+  }
+
+  const handleConfirmStartGame = async () => {
+    if (!pendingStartGame) return
+    
+    const startTime = Timestamp.now()
+    const scorekeeper =  auth.currentUser?.displayName || auth.currentUser?.email || 'Unknown'
+    
+    const updateData: Partial<Game> = {
+      status: 'in_progress',
+      startTime,
+      homeTeamStartsLeft: setupHomeStartsLeft,
+      scorekeeper,
+    }
+    
+    // Only add optional fields if they have values
+    if (setupOffenseTeamId) {
+      updateData.startingOffenseTeamId = setupOffenseTeamId
+    }
+    if (setupGenderRatio) {
+      updateData.genderRatio = setupGenderRatio
+    }
+    
+    const success = await gameStore.updateGame(pendingStartGame.id, updateData)
     if (success) {
-      gameStore.setCurrentGame({ ...game, status: 'in_progress' })
-      setActiveGameView({ ...game, status: 'in_progress' })
+      const updatedGame = { ...pendingStartGame, ...updateData }
+      gameStore.setCurrentGame(updatedGame)
+      setActiveGameView(updatedGame)
+      setIsSetupModalOpen(false)
+      setPendingStartGame(null)
       toast.success('Game started!')
+    } else {
+      toast.error(gameStore.error || 'Failed to start game')
     }
   }
 
@@ -206,6 +275,7 @@ export const GamesPage = observer(function GamesPage() {
       assisterName: assister?.playerName,
       homeScore: newHomeScore,
       awayScore: newAwayScore,
+      scoredAt: Timestamp.now(),
     })
 
     if (event) {
@@ -234,6 +304,140 @@ export const GamesPage = observer(function GamesPage() {
     }
   }
 
+  const handleTimeout = async (team: 'home' | 'away') => {
+    if (!activeGameView) return
+    
+    const now = Timestamp.now()
+    const currentTimeouts = team === 'home' 
+      ? (activeGameView.homeTimeouts || [])
+      : (activeGameView.awayTimeouts || [])
+    
+    const updateData = team === 'home'
+      ? { homeTimeouts: [...currentTimeouts, now] }
+      : { awayTimeouts: [...currentTimeouts, now] }
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({ ...activeGameView, ...updateData })
+      toast.success(`${team === 'home' ? activeGameView.homeTeamName : activeGameView.awayTeamName} timeout!`)
+    }
+  }
+
+  const handleSpiritTimeout = async (team: 'home' | 'away') => {
+    if (!activeGameView) return
+    
+    const now = Timestamp.now()
+    const currentTimeouts = team === 'home' 
+      ? (activeGameView.homeSpiritTimeouts || [])
+      : (activeGameView.awaySpiritTimeouts || [])
+    
+    const updateData = team === 'home'
+      ? { homeSpiritTimeouts: [...currentTimeouts, now] }
+      : { awaySpiritTimeouts: [...currentTimeouts, now] }
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({ ...activeGameView, ...updateData })
+      toast.success(`${team === 'home' ? activeGameView.homeTeamName : activeGameView.awayTeamName} spirit timeout!`)
+    }
+  }
+
+  const handleHalftime = async () => {
+    if (!activeGameView) return
+    
+    const now = Timestamp.now()
+    const updateData = {
+      halftimeTime: now,
+      halftimeHomeScore: activeGameView.homeScore,
+      halftimeAwayScore: activeGameView.awayScore,
+    }
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({ ...activeGameView, ...updateData })
+      toast.success('Half-time recorded!')
+    }
+  }
+
+  const handleStartSecondHalf = async () => {
+    if (!activeGameView) return
+    
+    const now = Timestamp.now()
+    const updateData = { secondHalfStartTime: now }
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({ ...activeGameView, ...updateData })
+      toast.success('Second half started!')
+    }
+  }
+
+  const handleSaveSignature = async (team: 'home' | 'away', signature: string) => {
+    if (!activeGameView) return
+    
+    const updateData = team === 'home' 
+      ? { homeTeamSignature: signature }
+      : { awayTeamSignature: signature }
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({
+        ...activeGameView,
+        ...updateData,
+      })
+      toast.success(`${team === 'home' ? activeGameView.homeTeamName : activeGameView.awayTeamName} signature saved!`)
+    }
+  }
+
+  const openEditSettingsModal = () => {
+    if (!activeGameView) return
+    // Populate form with current values
+    setEditField(activeGameView.field || '')
+    setEditDivision(activeGameView.division || '')
+    setEditPoolOrBracket(activeGameView.poolOrBracket || '')
+    setEditGameNumber(activeGameView.gameNumber || '')
+    setEditOffenseTeamId(activeGameView.startingOffenseTeamId || activeGameView.homeTeamId)
+    setEditHomeStartsLeft(activeGameView.homeTeamStartsLeft ?? true)
+    setEditGenderRatio(activeGameView.genderRatio || '')
+    setIsEditSettingsOpen(true)
+  }
+
+  const handleSaveEditSettings = async () => {
+    if (!activeGameView) return
+    
+    const updateData: Partial<Game> = {
+      homeTeamStartsLeft: editHomeStartsLeft,
+    }
+    
+    // Only add optional fields if they have values
+    if (editField) updateData.field = editField
+    if (editDivision) updateData.division = editDivision
+    if (editPoolOrBracket) updateData.poolOrBracket = editPoolOrBracket
+    if (editGameNumber) updateData.gameNumber = editGameNumber
+    if (editOffenseTeamId) updateData.startingOffenseTeamId = editOffenseTeamId
+    if (editGenderRatio) updateData.genderRatio = editGenderRatio
+    
+    const success = await gameStore.updateGame(activeGameView.id, updateData)
+    if (success) {
+      setActiveGameView({ ...activeGameView, ...updateData })
+      setIsEditSettingsOpen(false)
+      toast.success('Game settings updated!')
+    } else {
+      toast.error(gameStore.error || 'Failed to update settings')
+    }
+  }
+
+  const handleExportGame = (game: Game) => {
+    const events = gameStore.events
+    
+    const success = openGameScoresheet(game, events)
+    if (success) {
+      toast.success('Scoresheet opened in new tab!')
+    } else {
+      toast.error('Please allow popups for this site')
+    }
+  }
+
   const isLoading = teamStore.isLoading || playerStore.isLoading || gameStore.isLoading
 
   // Active Game Scoring View
@@ -253,6 +457,14 @@ export const GamesPage = observer(function GamesPage() {
               ← Back to Games
             </Button>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openEditSettingsModal}
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                Edit Settings
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -283,6 +495,122 @@ export const GamesPage = observer(function GamesPage() {
                   <p className="text-6xl font-bold">{activeGameView.awayScore}</p>
                 </div>
               </div>
+              
+              {/* Game Setup Info */}
+              <div className="flex items-center justify-center gap-6 mt-4 text-sm text-muted-foreground">
+                {activeGameView.startingOffenseTeamId && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">Offense:</span>
+                    <span>
+                      {activeGameView.startingOffenseTeamId === activeGameView.homeTeamId 
+                        ? activeGameView.homeTeamName 
+                        : activeGameView.awayTeamName}
+                    </span>
+                  </div>
+                )}
+                {activeGameView.homeTeamStartsLeft !== undefined && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">Endzone:</span>
+                    <span>
+                      {activeGameView.homeTeamName} {activeGameView.homeTeamStartsLeft ? '← Left' : 'Right →'}
+                    </span>
+                  </div>
+                )}
+                {activeGameView.genderRatio && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">Ratio:</span>
+                    <Badge variant="outline">{activeGameView.genderRatio}</Badge>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Game Progress Controls */}
+          <Card>
+            <CardContent className="py-4">
+              <div className="grid grid-cols-2 gap-6">
+                {/* Home Team Controls */}
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-center">{activeGameView.homeTeamName}</p>
+                  <div className="flex gap-2 justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTimeout('home')}
+                      className="flex-1"
+                    >
+                      <Clock className="mr-1 h-4 w-4" />
+                      Timeout ({(activeGameView.homeTimeouts || []).length})
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSpiritTimeout('home')}
+                      className="flex-1"
+                    >
+                      <Heart className="mr-1 h-4 w-4" />
+                      Spirit ({(activeGameView.homeSpiritTimeouts || []).length})
+                    </Button>
+                  </div>
+                </div>
+                
+                {/* Away Team Controls */}
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-center">{activeGameView.awayTeamName}</p>
+                  <div className="flex gap-2 justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTimeout('away')}
+                      className="flex-1"
+                    >
+                      <Clock className="mr-1 h-4 w-4" />
+                      Timeout ({(activeGameView.awayTimeouts || []).length})
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSpiritTimeout('away')}
+                      className="flex-1"
+                    >
+                      <Heart className="mr-1 h-4 w-4" />
+                      Spirit ({(activeGameView.awaySpiritTimeouts || []).length})
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Half-time Controls */}
+              <div className="flex justify-center gap-4 mt-4 pt-4 border-t">
+                {!activeGameView.halftimeTime ? (
+                  <Button variant="secondary" onClick={handleHalftime}>
+                    <Timer className="mr-2 h-4 w-4" />
+                    Call Half-time
+                  </Button>
+                ) : !activeGameView.secondHalfStartTime ? (
+                  <div className="flex items-center gap-4">
+                    <Badge variant="secondary" className="text-sm">
+                      Half-time: {activeGameView.halftimeHomeScore} - {activeGameView.halftimeAwayScore}
+                    </Badge>
+                    <Button variant="secondary" onClick={handleStartSecondHalf}>
+                      <Play className="mr-2 h-4 w-4" />
+                      Start 2nd Half
+                    </Button>
+                  </div>
+                ) : (
+                  <Badge variant="outline" className="text-sm">
+                    Half-time: {activeGameView.halftimeHomeScore} - {activeGameView.halftimeAwayScore} • 2nd half in progress
+                  </Badge>
+                )}
+              </div>
+              
+              {/* Scorekeeper */}
+              {activeGameView.scorekeeper && (
+                <p className="text-xs text-muted-foreground text-center mt-3">
+                  Scorekeeper: {activeGameView.scorekeeper}
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -416,6 +744,149 @@ export const GamesPage = observer(function GamesPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Edit Game Settings Modal (for in_progress view) */}
+          <Dialog open={isEditSettingsOpen} onOpenChange={setIsEditSettingsOpen}>
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Edit Game Settings</DialogTitle>
+                <DialogDescription>
+                  Update game logistics and setup information.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 py-4">
+                {/* Game Logistics */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Game Logistics</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm">Field</Label>
+                      <Input
+                        placeholder="e.g., 1"
+                        value={editField}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditField(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm">Division</Label>
+                      <Input
+                        placeholder="e.g., Open"
+                        value={editDivision}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditDivision(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm">Pool / Bracket</Label>
+                      <Input
+                        placeholder="e.g., Pool A"
+                        value={editPoolOrBracket}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditPoolOrBracket(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm">Game #</Label>
+                      <Input
+                        placeholder="e.g., 12"
+                        value={editGameNumber}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditGameNumber(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Starting Offense */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Which team starts on offense?</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant={editOffenseTeamId === activeGameView.homeTeamId ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setEditOffenseTeamId(activeGameView.homeTeamId)}
+                    >
+                      {activeGameView.homeTeamName}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={editOffenseTeamId === activeGameView.awayTeamId ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setEditOffenseTeamId(activeGameView.awayTeamId)}
+                    >
+                      {activeGameView.awayTeamName}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Starting Endzone */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Which endzone does {activeGameView.homeTeamName} start at?</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant={editHomeStartsLeft ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setEditHomeStartsLeft(true)}
+                    >
+                      ← Left
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={!editHomeStartsLeft ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setEditHomeStartsLeft(false)}
+                    >
+                      Right →
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Gender Ratio */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Gender ratio on 1st point (mixed only)</Label>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Button
+                      type="button"
+                      variant={editGenderRatio === '3M/2F' ? 'default' : 'outline'}
+                      onClick={() => setEditGenderRatio('3M/2F')}
+                    >
+                      3M / 2F
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={editGenderRatio === '2M/3F' ? 'default' : 'outline'}
+                      onClick={() => setEditGenderRatio('2M/3F')}
+                    >
+                      2M / 3F
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={editGenderRatio === '' ? 'secondary' : 'ghost'}
+                      onClick={() => setEditGenderRatio('')}
+                    >
+                      N/A
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsEditSettingsOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveEditSettings} disabled={gameStore.isLoading}>
+                  {gameStore.isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </TournamentGuard>
     )
@@ -426,9 +897,15 @@ export const GamesPage = observer(function GamesPage() {
     return (
       <TournamentGuard>
         <div className="space-y-4">
-          <Button variant="outline" onClick={() => setActiveGameView(null)}>
-            ← Back to Games
-          </Button>
+          <div className="flex items-center justify-between">
+            <Button variant="outline" onClick={() => setActiveGameView(null)}>
+              ← Back to Games
+            </Button>
+            <Button variant="outline" onClick={() => handleExportGame(activeGameView)}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+          </div>
 
           {/* Final Score */}
           <Card className="bg-gradient-to-r from-primary/10 via-background to-primary/10">
@@ -489,6 +966,33 @@ export const GamesPage = observer(function GamesPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Captain Signatures */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <PenTool className="h-5 w-5" />
+                Captain Signatures
+              </CardTitle>
+              <CardDescription>
+                Sign to confirm the game results
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <SignaturePad
+                  label={`${activeGameView.homeTeamName} Captain`}
+                  initialValue={activeGameView.homeTeamSignature}
+                  onSave={(sig) => handleSaveSignature('home', sig)}
+                />
+                <SignaturePad
+                  label={`${activeGameView.awayTeamName} Captain`}
+                  initialValue={activeGameView.awayTeamSignature}
+                  onSave={(sig) => handleSaveSignature('away', sig)}
+                />
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </TournamentGuard>
     )
@@ -632,6 +1136,42 @@ export const GamesPage = observer(function GamesPage() {
             </DialogHeader>
 
             <div className="space-y-6 py-4">
+              {/* Game Logistics */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="space-y-2">
+                  <Label>Field</Label>
+                  <Input
+                    placeholder="e.g., 1"
+                    value={gameField}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGameField(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Division</Label>
+                  <Input
+                    placeholder="e.g., Open"
+                    value={gameDivision}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGameDivision(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Pool / Bracket</Label>
+                  <Input
+                    placeholder="e.g., Pool A"
+                    value={gamePoolOrBracket}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGamePoolOrBracket(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Game #</Label>
+                  <Input
+                    placeholder="e.g., 12"
+                    value={gameNumber}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGameNumber(e.target.value)}
+                  />
+                </div>
+              </div>
+
               {/* Team Selection */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -777,6 +1317,124 @@ export const GamesPage = observer(function GamesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Game Setup Modal */}
+        <Dialog open={isSetupModalOpen} onOpenChange={(open) => {
+          if (!open) {
+            setIsSetupModalOpen(false)
+            setPendingStartGame(null)
+          }
+        }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Game Setup</DialogTitle>
+              <DialogDescription>
+                Set the starting conditions for this game.
+              </DialogDescription>
+            </DialogHeader>
+
+            {pendingStartGame && (
+              <div className="space-y-6 py-4">
+                {/* Starting Offense */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Which team starts on offense?</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant={setupOffenseTeamId === pendingStartGame.homeTeamId ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setSetupOffenseTeamId(pendingStartGame.homeTeamId)}
+                    >
+                      {pendingStartGame.homeTeamName}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={setupOffenseTeamId === pendingStartGame.awayTeamId ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setSetupOffenseTeamId(pendingStartGame.awayTeamId)}
+                    >
+                      {pendingStartGame.awayTeamName}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Starting Endzone */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Which endzone does {pendingStartGame.homeTeamName} start at?</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant={setupHomeStartsLeft ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setSetupHomeStartsLeft(true)}
+                    >
+                      ← Left
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={!setupHomeStartsLeft ? 'default' : 'outline'}
+                      className="h-14"
+                      onClick={() => setSetupHomeStartsLeft(false)}
+                    >
+                      Right →
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Gender Ratio (for mixed) */}
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Gender ratio on 1st point (mixed only)</Label>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Button
+                      type="button"
+                      variant={setupGenderRatio === '3M/2F' ? 'default' : 'outline'}
+                      onClick={() => setSetupGenderRatio('3M/2F')}
+                    >
+                      3M / 2F
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={setupGenderRatio === '2M/3F' ? 'default' : 'outline'}
+                      onClick={() => setSetupGenderRatio('2M/3F')}
+                    >
+                      2M / 3F
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={setupGenderRatio === '' ? 'secondary' : 'ghost'}
+                      onClick={() => setSetupGenderRatio('')}
+                    >
+                      N/A
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => {
+                setIsSetupModalOpen(false)
+                setPendingStartGame(null)
+              }}>
+                Cancel
+              </Button>
+              <Button onClick={handleConfirmStartGame} disabled={gameStore.isLoading}>
+                {gameStore.isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 h-4 w-4" />
+                    Start Game
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </div>
     </TournamentGuard>
   )

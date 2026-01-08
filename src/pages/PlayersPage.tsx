@@ -5,7 +5,7 @@ import { TournamentGuard } from '@/components/tournament'
 import { useTournamentStore, useTeamStore, usePlayerStore } from '@/stores'
 import * as firestoreService from '@/services/firestore'
 import type { PlayerStats } from '@/types'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import {
   Card,
   CardContent,
@@ -93,46 +93,152 @@ export const PlayersPage = observer(function PlayersPage() {
 
   const isLoading = playerStore.isLoading || teamStore.isLoading || isLoadingStats
 
-  // Export to Excel function
-  const exportToExcel = () => {
+  // Export to Excel function with styling
+  const exportToExcel = async () => {
     const tournamentName = tournamentStore.currentTournament?.name || 'Tournament'
     
-    // Prepare data for export
-    const exportData = playersWithStats.map((player, index) => ({
-      'Rank': index + 1,
-      'Name': player.name,
-      'Number': player.number,
-      'Gender': player.gender === 'male' ? 'Male' : 'Female',
-      'Team': player.teamName,
-      'Goals': player.goals,
-      'Assists': player.assists,
-      'Total Points': player.total,
-    }))
-
     // Create workbook and worksheet
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.json_to_sheet(exportData)
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'Ulti Stats'
+    workbook.created = new Date()
+    
+    const worksheet = workbook.addWorksheet('Player Stats', {
+      views: [{ state: 'frozen', ySplit: 2 }] // Freeze header rows
+    })
 
-    // Set column widths
-    ws['!cols'] = [
-      { wch: 6 },   // Rank
-      { wch: 20 },  // Name
-      { wch: 8 },   // Number
-      { wch: 8 },   // Gender
-      { wch: 20 },  // Team
-      { wch: 8 },   // Goals
-      { wch: 8 },   // Assists
-      { wch: 12 },  // Total Points
+    // Define columns
+    worksheet.columns = [
+      { header: 'Rank', key: 'rank', width: 8 },
+      { header: 'Name', key: 'name', width: 25 },
+      { header: '#', key: 'number', width: 8 },
+      { header: 'Gender', key: 'gender', width: 10 },
+      { header: 'Team', key: 'team', width: 22 },
+      { header: 'Goals', key: 'goals', width: 10 },
+      { header: 'Assists', key: 'assists', width: 10 },
+      { header: 'Total', key: 'total', width: 10 },
     ]
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Player Stats')
+    // Add title row
+    worksheet.insertRow(1, [tournamentName + ' — Player Statistics'])
+    worksheet.mergeCells('A1:H1')
+    const titleCell = worksheet.getCell('A1')
+    titleCell.font = { size: 16, bold: true, color: { argb: 'FF1F2937' } }
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    titleCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    }
+    worksheet.getRow(1).height = 30
 
-    // Generate filename with tournament name and date
+    // Style header row (now row 2)
+    const headerRow = worksheet.getRow(2)
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF374151' }
+    }
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' }
+    headerRow.height = 24
+
+    // Add borders to header
+    headerRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+        bottom: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+        left: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+        right: { style: 'thin', color: { argb: 'FF9CA3AF' } }
+      }
+    })
+
+    // Add data rows
+    playersWithStats.forEach((player, index) => {
+      const row = worksheet.addRow({
+        rank: index + 1,
+        name: player.name,
+        number: player.number,
+        gender: player.gender === 'male' ? 'M' : 'F',
+        team: player.teamName,
+        goals: player.goals,
+        assists: player.assists,
+        total: player.total,
+      })
+
+      // Alternating row colors
+      const isEvenRow = index % 2 === 0
+      row.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: isEvenRow ? 'FFFFFFFF' : 'FFF9FAFB' }
+      }
+
+      // Style specific columns
+      row.getCell('rank').alignment = { horizontal: 'center' }
+      row.getCell('number').alignment = { horizontal: 'center' }
+      row.getCell('gender').alignment = { horizontal: 'center' }
+      row.getCell('goals').alignment = { horizontal: 'center' }
+      row.getCell('assists').alignment = { horizontal: 'center' }
+      row.getCell('total').alignment = { horizontal: 'center' }
+
+      // Color gender cell
+      const genderCell = row.getCell('gender')
+      if (player.gender === 'male') {
+        genderCell.font = { color: { argb: 'FF3B82F6' }, bold: true }
+      } else {
+        genderCell.font = { color: { argb: 'FFEC4899' }, bold: true }
+      }
+
+      // Color stats cells
+      if (player.goals > 0) {
+        row.getCell('goals').font = { color: { argb: 'FF16A34A' }, bold: true }
+      }
+      if (player.assists > 0) {
+        row.getCell('assists').font = { color: { argb: 'FF2563EB' }, bold: true }
+      }
+      row.getCell('total').font = { bold: true }
+
+      // Highlight top 3
+      if (index < 3 && player.total > 0) {
+        const rankCell = row.getCell('rank')
+        if (index === 0) {
+          rankCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } }
+          rankCell.font = { bold: true }
+        } else if (index === 1) {
+          rankCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9CA3AF' } }
+          rankCell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+        } else {
+          rankCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } }
+          rankCell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+        }
+      }
+
+      // Add borders
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+          bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+          left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+          right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+        }
+      })
+    })
+
+    // Generate file and download
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    })
+    
     const date = new Date().toISOString().split('T')[0]
     const filename = `${tournamentName.replace(/[^a-z0-9]/gi, '_')}_stats_${date}.xlsx`
-
-    // Download
-    XLSX.writeFile(wb, filename)
+    
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -402,12 +508,12 @@ export const PlayersPage = observer(function PlayersPage() {
               <CardHeader className="pb-2">
                 <CardDescription>Top Scorer</CardDescription>
                 <CardTitle className="text-2xl">
-                  {playersWithStats.sort((a, b) => b.goals - a.goals)[0]?.name || '—'}
+                  {[...playersWithStats].sort((a, b) => b.goals - a.goals)[0]?.name || '—'}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-3xl font-bold text-green-600">
-                  {playersWithStats.sort((a, b) => b.goals - a.goals)[0]?.goals || 0}
+                  {[...playersWithStats].sort((a, b) => b.goals - a.goals)[0]?.goals || 0}
                   <span className="text-sm font-normal text-muted-foreground ml-2">goals</span>
                 </p>
               </CardContent>
@@ -417,12 +523,12 @@ export const PlayersPage = observer(function PlayersPage() {
               <CardHeader className="pb-2">
                 <CardDescription>Top Assist</CardDescription>
                 <CardTitle className="text-2xl">
-                  {playersWithStats.sort((a, b) => b.assists - a.assists)[0]?.name || '—'}
+                  {[...playersWithStats].sort((a, b) => b.assists - a.assists)[0]?.name || '—'}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-3xl font-bold text-blue-600">
-                  {playersWithStats.sort((a, b) => b.assists - a.assists)[0]?.assists || 0}
+                  {[...playersWithStats].sort((a, b) => b.assists - a.assists)[0]?.assists || 0}
                   <span className="text-sm font-normal text-muted-foreground ml-2">assists</span>
                 </p>
               </CardContent>

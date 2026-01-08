@@ -81,6 +81,37 @@ export interface Game extends BaseEntity {
   
   date: Timestamp
   status: GameStatus
+  
+  // Game logistics
+  field?: string
+  division?: string
+  poolOrBracket?: string
+  gameNumber?: string
+  startTime?: Timestamp  // Set when game starts (play button pressed)
+  
+  // Game setup (set when game starts)
+  startingOffenseTeamId?: string  // Which team starts on offense
+  homeTeamStartsLeft?: boolean    // true = home team starts at left endzone
+  genderRatio?: '3M/2F' | '2M/3F' // For mixed division
+  
+  // Game progress
+  scorekeeper?: string  // Name of the scorekeeper (from logged in user)
+  
+  // Timeouts (array of timestamps when timeout was called)
+  homeTimeouts?: Timestamp[]
+  awayTimeouts?: Timestamp[]
+  homeSpiritTimeouts?: Timestamp[]
+  awaySpiritTimeouts?: Timestamp[]
+  
+  // Half-time info
+  halftimeHomeScore?: number
+  halftimeAwayScore?: number
+  halftimeTime?: Timestamp  // When half-time was called
+  secondHalfStartTime?: Timestamp  // When second half started
+  
+  // Captain signatures (base64 encoded images)
+  homeTeamSignature?: string
+  awayTeamSignature?: string
 }
 
 export type CreateGameData = Omit<Game, 'id' | 'createdAt' | 'updatedAt' | 'homeScore' | 'awayScore'> & {
@@ -112,6 +143,9 @@ export interface ScoringEvent extends BaseEntity {
   // Score after this point
   homeScore: number
   awayScore: number
+  
+  // When the point was scored
+  scoredAt?: Timestamp
 }
 
 export type CreateScoringEventData = Omit<ScoringEvent, 'id' | 'createdAt' | 'updatedAt'>

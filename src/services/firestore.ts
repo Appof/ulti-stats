@@ -48,6 +48,7 @@ import type {
   PlayerStats,
 } from '@/types'
 
+
 // ============================================
 // Collection References
 // ============================================
@@ -74,6 +75,22 @@ const withUpdatedAt = <T extends object>(data: T) => ({
   updatedAt: Timestamp.now(),
 })
 
+// Helper to recursively remove undefined values from an object (Firestore doesn't accept undefined)
+const cleanForFirestore = (obj: unknown): unknown => {
+  if (obj === null || obj === undefined) return null
+  if (typeof obj !== 'object') return obj
+  if (obj instanceof Timestamp) return obj
+  if (Array.isArray(obj)) return obj.map(cleanForFirestore)
+  
+  const cleaned: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value)
+    }
+  }
+  return cleaned
+}
+
 // ============================================
 // History Service
 // ============================================
@@ -92,6 +109,17 @@ export async function createHistoryEntry(
   const user = auth.currentUser
   if (!user) return
 
+  // Clean options to remove any undefined values
+  const cleanedOptions = options ? {
+    changes: options.changes?.map(c => ({
+      field: c.field,
+      oldValue: c.oldValue ?? null,
+      newValue: c.newValue ?? null,
+    })),
+    previousSnapshot: options.previousSnapshot ? cleanForFirestore(options.previousSnapshot) as Record<string, unknown> : undefined,
+    currentSnapshot: options.currentSnapshot ? cleanForFirestore(options.currentSnapshot) as Record<string, unknown> : undefined,
+  } : undefined
+
   const historyData: CreateHistoryEntryData = {
     action,
     entityType,
@@ -100,8 +128,12 @@ export async function createHistoryEntry(
     userId: user.uid,
     userEmail: user.email || 'unknown',
     timestamp: Timestamp.now(),
-    ...options,
   }
+
+  // Only add cleaned options if they exist
+  if (cleanedOptions?.changes) historyData.changes = cleanedOptions.changes
+  if (cleanedOptions?.previousSnapshot) historyData.previousSnapshot = cleanedOptions.previousSnapshot
+  if (cleanedOptions?.currentSnapshot) historyData.currentSnapshot = cleanedOptions.currentSnapshot
 
   await addDoc(historyRef, withTimestamps(historyData))
 }
@@ -341,7 +373,7 @@ export async function createGame(data: CreateGameData): Promise<Game> {
 
 export async function updateGame(
   id: string,
-  data: Partial<CreateGameData>,
+  data: Partial<Game>,
   previousData: Game
 ): Promise<void> {
   const docRef = doc(gamesRef, id)
@@ -351,7 +383,7 @@ export async function updateGame(
   const changes = Object.keys(data).map((field) => ({
     field,
     oldValue: previousData[field as keyof Game],
-    newValue: data[field as keyof CreateGameData],
+    newValue: data[field as keyof Game],
   }))
 
   await createHistoryEntry('update', 'game', id, gameName, {
