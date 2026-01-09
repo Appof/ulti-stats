@@ -5,7 +5,6 @@ import { useAuthStore, useTournamentStore, useTeamStore, usePlayerStore, useGame
 import { TournamentGuard } from '@/components/tournament'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -13,9 +12,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
-import { Users, Trophy, History, UserCircle, Flag, Loader2 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Users, Trophy, History, UserCircle, Loader2, Play, CheckCircle, Clock } from 'lucide-react'
+import type { TournamentStatus } from '@/types'
 import * as firestoreService from '@/services/firestore'
 
 export const HomePage = observer(function HomePage() {
@@ -24,41 +30,65 @@ export const HomePage = observer(function HomePage() {
   const teamStore = useTeamStore()
   const playerStore = usePlayerStore()
   const gameStore = useGameStore()
-  const [isFinishing, setIsFinishing] = useState(false)
-  const [showFinishDialog, setShowFinishDialog] = useState(false)
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
+  const [showStatusDialog, setShowStatusDialog] = useState(false)
+  const [pendingStatus, setPendingStatus] = useState<TournamentStatus | null>(null)
   const [historyCount, setHistoryCount] = useState<number | null>(null)
 
-  // Load data for the dashboard
+  // Load data for the dashboard when tournament changes
   useEffect(() => {
     if (tournamentStore.currentTournament) {
-      if (!teamStore.isLoaded && !teamStore.isLoading) {
-        teamStore.loadTeams()
-      }
-      if (!playerStore.isLoaded && !playerStore.isLoading) {
-        playerStore.loadPlayers()
-      }
-      if (!gameStore.isLoaded && !gameStore.isLoading) {
-        gameStore.loadGames(tournamentStore.currentTournament.id)
-      }
+      // Reset and reload data for the new tournament
+      teamStore.resetLoaded()
+      playerStore.resetLoaded()
+      gameStore.resetLoaded()
+      
+      teamStore.loadTeams()
+      playerStore.loadPlayers()
+      gameStore.loadGames(tournamentStore.currentTournament.id)
+      
       // Load history count
       firestoreService.getHistory().then(history => {
         setHistoryCount(history.length)
       })
     }
-  }, [tournamentStore.currentTournament, teamStore, playerStore, gameStore])
+  }, [tournamentStore.currentTournament?.id]) // Only depend on tournament ID
 
-  const handleFinishTournament = async () => {
-    if (!tournamentStore.currentTournament) return
+  const handleStatusChange = (newStatus: TournamentStatus) => {
+    if (!tournamentStore.currentTournament || newStatus === tournamentStore.currentTournament.status) return
+    setPendingStatus(newStatus)
+    setShowStatusDialog(true)
+  }
+
+  const confirmStatusChange = async () => {
+    if (!tournamentStore.currentTournament || !pendingStatus) return
     
-    setIsFinishing(true)
+    setIsUpdatingStatus(true)
     const success = await tournamentStore.updateTournament(
       tournamentStore.currentTournament.id,
-      { status: 'completed' }
+      { status: pendingStatus }
     )
-    setIsFinishing(false)
+    setIsUpdatingStatus(false)
     
     if (success) {
-      setShowFinishDialog(false)
+      setShowStatusDialog(false)
+      setPendingStatus(null)
+    }
+  }
+
+  const getStatusLabel = (status: TournamentStatus) => {
+    switch (status) {
+      case 'upcoming': return 'Upcoming'
+      case 'active': return 'Active'
+      case 'completed': return 'Completed'
+    }
+  }
+
+  const getStatusIcon = (status: TournamentStatus) => {
+    switch (status) {
+      case 'upcoming': return <Clock className="h-4 w-4" />
+      case 'active': return <Play className="h-4 w-4" />
+      case 'completed': return <CheckCircle className="h-4 w-4" />
     }
   }
 
@@ -122,57 +152,82 @@ export const HomePage = observer(function HomePage() {
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Badge variant={
-                    currentTournament.status === 'active' ? 'default' :
-                    currentTournament.status === 'upcoming' ? 'secondary' : 'outline'
-                  }>
-                    {currentTournament.status}
-                  </Badge>
-                  {currentTournament.status !== 'completed' && (
-                    <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm" className="gap-2 hover:bg-green-50 hover:text-green-700 hover:border-green-300 transition-colors">
-                          <Flag className="h-4 w-4" />
-                          Finish Tournament
+                  <Select
+                    value={currentTournament.status}
+                    onValueChange={(value) => handleStatusChange(value as TournamentStatus)}
+                  >
+                    <SelectTrigger className="w-[140px] h-9">
+                      <SelectValue>
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(currentTournament.status)}
+                          <span>{getStatusLabel(currentTournament.status)}</span>
+                        </div>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="upcoming">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          <span>Upcoming</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="active">
+                        <div className="flex items-center gap-2">
+                          <Play className="h-4 w-4" />
+                          <span>Active</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="completed">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Completed</span>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {/* Status Change Confirmation Dialog */}
+                  <Dialog open={showStatusDialog} onOpenChange={setShowStatusDialog}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Change Tournament Status</DialogTitle>
+                        <DialogDescription>
+                          Are you sure you want to change "{currentTournament.name}" status from{' '}
+                          <strong>{getStatusLabel(currentTournament.status)}</strong> to{' '}
+                          <strong>{pendingStatus ? getStatusLabel(pendingStatus) : ''}</strong>?
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setShowStatusDialog(false)
+                            setPendingStatus(null)
+                          }}
+                          disabled={isUpdatingStatus}
+                        >
+                          Cancel
                         </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Finish Tournament</DialogTitle>
-                          <DialogDescription>
-                            Are you sure you want to mark "{currentTournament.name}" as completed?
-                            This will change the tournament status to finished.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <DialogFooter>
-                          <Button
-                            variant="outline"
-                            onClick={() => setShowFinishDialog(false)}
-                            disabled={isFinishing}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={handleFinishTournament}
-                            disabled={isFinishing}
-                            className="gap-2"
-                          >
-                            {isFinishing ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Finishing...
-                              </>
-                            ) : (
-                              <>
-                                <Flag className="h-4 w-4" />
-                                Finish Tournament
-                              </>
-                            )}
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  )}
+                        <Button
+                          onClick={confirmStatusChange}
+                          disabled={isUpdatingStatus}
+                          className="gap-2"
+                        >
+                          {isUpdatingStatus ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Updating...
+                            </>
+                          ) : (
+                            <>
+                              {pendingStatus && getStatusIcon(pendingStatus)}
+                              Change Status
+                            </>
+                          )}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
             </CardHeader>

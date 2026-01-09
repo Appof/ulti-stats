@@ -43,6 +43,10 @@ export class TeamStore {
     await this.loadTeams()
   }
 
+  resetLoaded(): void {
+    this.isLoaded = false
+  }
+
   async createTeam(data: CreateTeamData): Promise<Team | null> {
     this.isLoading = true
     this.error = null

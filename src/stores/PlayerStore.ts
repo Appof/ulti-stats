@@ -43,6 +43,10 @@ export class PlayerStore {
     await this.loadPlayers()
   }
 
+  resetLoaded(): void {
+    this.isLoaded = false
+  }
+
   getPlayersByTeam(teamId: string): Player[] {
     return this.players.filter((p) => p.teamId === teamId).sort((a, b) => a.number - b.number)
   }
