@@ -253,12 +253,12 @@ export const GamesPage = observer(function GamesPage() {
 
     const isHomeTeam = scoringTeamId === activeGameView.homeTeamId
     const roster = isHomeTeam ? activeGameView.homeRoster : activeGameView.awayRoster
-    const scorer = roster.find((p) => p.playerId === goalScorerPlayerId)
+    const scorer = goalScorerPlayerId !== 'none' 
+      ? roster.find((p) => p.playerId === goalScorerPlayerId) 
+      : null
     const assister = assisterPlayerId && assisterPlayerId !== 'none' 
       ? roster.find((p) => p.playerId === assisterPlayerId) 
       : null
-
-    if (!scorer) return
 
     const newHomeScore = isHomeTeam ? activeGameView.homeScore + 1 : activeGameView.homeScore
     const newAwayScore = !isHomeTeam ? activeGameView.awayScore + 1 : activeGameView.awayScore
@@ -267,9 +267,9 @@ export const GamesPage = observer(function GamesPage() {
       gameId: activeGameView.id,
       tournamentId: activeGameView.tournamentId,
       teamId: scoringTeamId,
-      scorerPlayerId: scorer.playerId,
-      scorerNumber: scorer.number,
-      scorerName: scorer.playerName,
+      scorerPlayerId: scorer?.playerId,
+      scorerNumber: scorer?.number,
+      scorerName: scorer?.playerName,
       assisterPlayerId: assister?.playerId,
       assisterNumber: assister?.number,
       assisterName: assister?.playerName,
@@ -279,7 +279,8 @@ export const GamesPage = observer(function GamesPage() {
     })
 
     if (event) {
-      toast.success(`Goal! ${scorer.playerName}${assister ? ` (assist: ${assister.playerName})` : ''}`)
+      const scorerText = scorer ? scorer.playerName : 'Unknown'
+      toast.success(`Goal! ${scorerText}${assister ? ` (assist: ${assister.playerName})` : ''}`)
       // Update local view
       setActiveGameView({
         ...activeGameView,
@@ -711,6 +712,13 @@ export const GamesPage = observer(function GamesPage() {
                         </Button>
                       ))}
                   </div>
+                  <Button
+                    variant="secondary"
+                    className="w-full h-14"
+                    onClick={() => handleScorePoint('none')}
+                  >
+                    No Scorer (Skip)
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -730,7 +738,9 @@ export const GamesPage = observer(function GamesPage() {
                       className="flex items-center justify-between text-sm p-2 rounded bg-muted/50"
                     >
                       <span>
-                        <span className="font-medium">#{event.scorerNumber} {event.scorerName}</span>
+                        <span className="font-medium">
+                          {event.scorerName ? `#${event.scorerNumber} ${event.scorerName}` : 'Unknown scorer'}
+                        </span>
                         {event.assisterName && (
                           <span className="text-muted-foreground"> (assist: #{event.assisterNumber} {event.assisterName})</span>
                         )}
@@ -950,7 +960,7 @@ export const GamesPage = observer(function GamesPage() {
                     {gameStore.events.map((event, index) => (
                       <TableRow key={event.id}>
                         <TableCell>{index + 1}</TableCell>
-                        <TableCell>#{event.scorerNumber} {event.scorerName}</TableCell>
+                        <TableCell>{event.scorerName ? `#${event.scorerNumber} ${event.scorerName}` : 'Unknown'}</TableCell>
                         <TableCell>
                           {event.assisterName
                             ? `#${event.assisterNumber} ${event.assisterName}`

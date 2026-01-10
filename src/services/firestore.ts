@@ -437,8 +437,11 @@ export async function createScoringEvent(
   data: CreateScoringEventData,
   game: Game
 ): Promise<ScoringEvent> {
-  const docRef = await addDoc(eventsRef, withTimestamps(data))
-  const created = { id: docRef.id, ...data } as ScoringEvent
+  // Clean data to remove undefined values (Firestore doesn't accept undefined)
+  const cleanedData = cleanForFirestore(data) as CreateScoringEventData
+  
+  const docRef = await addDoc(eventsRef, withTimestamps(cleanedData))
+  const created = { id: docRef.id, ...cleanedData } as ScoringEvent
 
   // Update game score
   const isHomeTeam = data.teamId === game.homeTeamId
@@ -448,9 +451,9 @@ export async function createScoringEvent(
     updatedAt: Timestamp.now(),
   })
 
-  const eventName = `${data.scorerName} goal${data.assisterName ? ` (assist: ${data.assisterName})` : ''}`
+  const eventName = `${data.scorerName || 'Unknown'} goal${data.assisterName ? ` (assist: ${data.assisterName})` : ''}`
   await createHistoryEntry('create', 'event', docRef.id, eventName, {
-    currentSnapshot: data as unknown as Record<string, unknown>,
+    currentSnapshot: cleanedData as unknown as Record<string, unknown>,
   })
 
   return created
@@ -474,7 +477,7 @@ export async function deleteScoringEvent(
     updatedAt: Timestamp.now(),
   })
 
-  const eventName = `${event.scorerName} goal${event.assisterName ? ` (assist: ${event.assisterName})` : ''}`
+  const eventName = `${event.scorerName || 'Unknown'} goal${event.assisterName ? ` (assist: ${event.assisterName})` : ''}`
   await createHistoryEntry('delete', 'event', event.id, eventName, {
     previousSnapshot: event as unknown as Record<string, unknown>,
   })
@@ -488,19 +491,21 @@ export function calculateStatsFromEvents(events: ScoringEvent[]): PlayerStats[] 
   const statsMap = new Map<string, PlayerStats>()
 
   events.forEach((event) => {
-    // Scorer stats
-    if (!statsMap.has(event.scorerPlayerId)) {
-      statsMap.set(event.scorerPlayerId, {
-        playerId: event.scorerPlayerId,
-        playerName: event.scorerName,
-        playerNumber: event.scorerNumber,
-        teamId: event.teamId,
-        goals: 0,
-        assists: 0,
-      })
+    // Scorer stats (skip if no scorer specified)
+    if (event.scorerPlayerId) {
+      if (!statsMap.has(event.scorerPlayerId)) {
+        statsMap.set(event.scorerPlayerId, {
+          playerId: event.scorerPlayerId,
+          playerName: event.scorerName!,
+          playerNumber: event.scorerNumber!,
+          teamId: event.teamId,
+          goals: 0,
+          assists: 0,
+        })
+      }
+      const scorerStats = statsMap.get(event.scorerPlayerId)!
+      scorerStats.goals++
     }
-    const scorerStats = statsMap.get(event.scorerPlayerId)!
-    scorerStats.goals++
 
     // Assister stats
     if (event.assisterPlayerId) {

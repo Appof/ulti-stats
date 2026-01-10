@@ -130,10 +130,10 @@ export interface ScoringEvent extends BaseEntity {
   // Which team scored
   teamId: string
   
-  // Who scored
-  scorerPlayerId: string
-  scorerNumber: number
-  scorerName: string
+  // Who scored (optional for "No Scorer" case)
+  scorerPlayerId?: string
+  scorerNumber?: number
+  scorerName?: string
   
   // Who assisted (optional)
   assisterPlayerId?: string

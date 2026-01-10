@@ -81,4 +81,5 @@ A web application for tracking ultimate frisbee statistics.
 - [X] Hosting, push to GitHub
 - [X] Game [protocol](https://docs.google.com/spreadsheets/d/1DiPli6cVmGYUI82V3EMBO5t0lCqC37h_nkbRPGpHmaY/edit?gid=1471253946#gid=1471253946) for each game 
 - [X] Fix export all results( sorting and order )
- 
+- [ ] Fix deploy job on github (change firebase project)
+  
